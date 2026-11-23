@@ -1,490 +1,237 @@
 
--- REPO SKY | CAR DEALERSHIP TYCOON
--- PAINEL + PESQUISA DE VEICULOS
--- INSPECAO LOCAL
-
 if not game:IsLoaded() then game.Loaded:Wait() end
+local P=game:GetService("Players").LocalPlayer
+local RS=game:GetService("ReplicatedStorage")
+local Run=game:GetService("RunService")
+local UIS=game:GetService("UserInputService")
+local PG=P:WaitForChild("PlayerGui")
+for _,n in ipairs({"RepoTPPanel","RepoSkyOpen"}) do local x=PG:FindFirstChild(n) if x then x:Destroy() end end
 
-local Players = game:GetService("Players")
-local UIS = game:GetService("UserInputService")
-local RS = game:GetService("ReplicatedStorage")
-
-local Player = Players.LocalPlayer
-local PlayerGui = Player:WaitForChild("PlayerGui")
-
-local old = PlayerGui:FindFirstChild("RepoTPPanel")
-if old then old:Destroy() end
-
-local Speed = {
-    Transport = 600,
-    Ascent = 350,
-    Descent = 450,
-    Height = 685,
-    Freeze = 1.5
-}
-
-local Connections = {}
-local Closed = false
-
-local function connect(signal, fn)
-    local c = signal:Connect(fn)
-    table.insert(Connections, c)
-    return c
+local S={Transport=600,Ascent=350,Descent=450,Height=685,Freeze=1.5}
+local C,Selected,Flight,Closed={},nil,nil,false
+local function track(c) table.insert(C,c) return c end
+local function make(t,p,parent)
+ local x=Instance.new(t)
+ for k,v in pairs(p or {}) do x[k]=v end
+ x.Parent=parent
+ return x
+end
+local function round(x,n) make("UICorner",{CornerRadius=UDim.new(0,n or 7)},x) end
+local function label(parent,txt,h)
+ return make("TextLabel",{Size=UDim2.new(1,0,0,h or 25),BackgroundTransparency=1,Text=txt,TextColor3=Color3.fromRGB(220,228,240),Font=Enum.Font.Gotham,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left,TextWrapped=true},parent)
+end
+local function btn(parent,txt,fn)
+ local b=make("TextButton",{Size=UDim2.new(1,-6,0,34),BackgroundColor3=Color3.fromRGB(38,75,115),Text=txt,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=11},parent)
+ round(b)
+ track(b.Activated:Connect(fn))
+ return b
+end
+local function root(m)
+ if not m then return end
+ if m:IsA("BasePart") then return m end
+ return m.PrimaryPart or m:FindFirstChild("HumanoidRootPart") or m:FindFirstChildWhichIsA("BasePart",true)
+end
+local function owner(m)
+ local s=m:FindFirstChild("Stats")
+ local o=s and s:FindFirstChild("Owner")
+ local v
+ if o then pcall(function() v=o.Value end) end
+ v=v or m:GetAttribute("Owner")
+ if typeof(v)=="Instance" then return v.Name,v==P end
+ if v==P.Name or v==P.UserId then return P.Name,true end
+ if type(v)=="number" then
+  local ok,n=pcall(function() return game:GetService("Players"):GetNameFromUserIdAsync(v) end)
+  if ok then return n,v==P.UserId end
+ end
+ return tostring(v or "Desconhecido"),false
+end
+local function catalog()
+ local ok,x=pcall(function() return RS.Data.CarShopEntries.ById end)
+ return ok and x
+end
+local function info(m)
+ local ct=m:FindFirstChild("CarType",true)
+ local id=ct and tostring(ct.Value)
+ local e=id and catalog() and catalog():FindFirstChild(id)
+ local n=e and e:FindFirstChild("DisplayName")
+ local im=e and e:FindFirstChild("ThumbnailImage")
+ local own=owner(m)
+ return n and tostring(n.Value) or m.Name,im and tostring(im.Value) or "",own,id
+end
+local function vehicles()
+ local out,seen={},{}
+ for _,folderName in ipairs({"Cars","RepoCars"}) do
+  local f=workspace:FindFirstChild(folderName)
+  if f then for _,m in ipairs(f:GetChildren()) do
+   if m:IsA("Model") and root(m) and not seen[m] then
+    seen[m]=true table.insert(out,m)
+   end
+  end end
+ end
+ return out
+end
+local function teleport(m)
+ local ch=P.Character
+ local hrp=ch and ch:FindFirstChild("HumanoidRootPart")
+ local r=root(m)
+ if not hrp or not r then return end
+ hrp.CFrame=r.CFrame*CFrame.new(0,5,0)
+ Selected=m
+ local seat=m:FindFirstChildWhichIsA("VehicleSeat",true)
+ local hum=ch:FindFirstChildOfClass("Humanoid")
+ if seat and hum then task.wait(.15) seat:Sit(hum) end
+end
+local function stop()
+ if Flight then
+  for _,x in ipairs(Flight) do pcall(function() x:Destroy() end) end
+  Flight=nil
+ end
+end
+local function fly(m,dest)
+ stop()
+ local r=root(m)
+ if not r or not dest then return end
+ local att=Instance.new("Attachment",r)
+ local lv=Instance.new("LinearVelocity",r)
+ lv.Attachment0=att lv.RelativeTo=Enum.ActuatorRelativeTo.World lv.MaxForce=math.huge
+ local ao=Instance.new("AlignOrientation",r)
+ ao.Attachment0=att ao.Mode=Enum.OrientationAlignmentMode.OneAttachment
+ ao.CFrame=r.CFrame.Rotation ao.MaxTorque=math.huge ao.Responsiveness=35
+ Flight={lv,att,ao}
+ local startY=r.Position.Y
+ local phase=1
+ local conn
+ conn=Run.Heartbeat:Connect(function()
+  if not r.Parent or not lv.Parent then conn:Disconnect() return end
+  local pos=r.Position
+  local target=dest.Position
+  local goal
+  if phase==1 then
+   goal=Vector3.new(pos.X,startY+S.Height,pos.Z)
+   if math.abs(pos.Y-goal.Y)<5 then phase=2 end
+  elseif phase==2 then
+   goal=Vector3.new(target.X,target.Y+8,target.Z)
+   if (Vector3.new(pos.X,0,pos.Z)-Vector3.new(target.X,0,target.Z)).Magnitude<12 then phase=3 end
+  else
+   goal=Vector3.new(target.X,target.Y+8,target.Z)
+   if math.abs(pos.Y-goal.Y)<3 then
+    lv.VectorVelocity=Vector3.zero
+    task.delay(S.Freeze,stop)
+    conn:Disconnect()
+    return
+   end
+  end
+  local delta=goal-pos
+  local speed=phase==1 and S.Ascent or phase==3 and S.Descent or S.Transport
+  lv.VectorVelocity=delta.Magnitude>1 and delta.Unit*math.min(speed,delta.Magnitude*3) or Vector3.zero
+ end)
 end
 
-local function make(class, props, parent)
-    local obj = Instance.new(class)
-    for k,v in pairs(props) do obj[k] = v end
-    obj.Parent = parent
-    return obj
-end
-
-local function corner(obj, n)
-    make("UICorner", {CornerRadius=UDim.new(0,n or 7)}, obj)
-end
-
-local function stroke(obj, color)
-    make("UIStroke", {Color=color, Thickness=1.2}, obj)
-end
-
-local function label(parent, text, height)
-    return make("TextLabel", {
-        Size=UDim2.new(1,0,0,height or 26),
-        BackgroundTransparency=1,
-        Text=text,
-        TextColor3=Color3.fromRGB(205,215,230),
-        Font=Enum.Font.Gotham,
-        TextSize=12,
-        TextWrapped=true,
-        TextXAlignment=Enum.TextXAlignment.Left
-    }, parent)
-end
-
-local function button(parent, text, color)
-    local b=make("TextButton", {
-        Size=UDim2.new(1,0,0,35),
-        BackgroundColor3=color or Color3.fromRGB(38,91,150),
-        BorderSizePixel=0,
-        Text=text,
-        TextColor3=Color3.new(1,1,1),
-        Font=Enum.Font.GothamBold,
-        TextSize=11
-    }, parent)
-    corner(b,6)
-    return b
-end
-
-local Gui=make("ScreenGui", {
-    Name="RepoTPPanel",
-    ResetOnSpawn=false,
-    DisplayOrder=999,
-    ZIndexBehavior=Enum.ZIndexBehavior.Sibling
-}, PlayerGui)
-
--- BOTAO FLUTUANTE
-
-local Open=make("TextButton", {
-    Name="RepoSkyOpen",
-    Size=UDim2.fromOffset(42,42),
-    Position=UDim2.new(0,15,0.5,-21),
-    BackgroundColor3=Color3.fromRGB(30,125,80),
-    BorderSizePixel=0,
-    Text="R",
-    TextColor3=Color3.new(1,1,1),
-    Font=Enum.Font.GothamBold,
-    TextSize=19,
-    Active=true,
-    ZIndex=100
-},Gui)
-corner(Open,12)
-
--- PAINEL
-
-local Main=make("Frame", {
-    Size=UDim2.fromOffset(590,440),
-    Position=UDim2.new(0.5,-295,0.5,-220),
-    BackgroundColor3=Color3.fromRGB(12,16,24),
-    BorderSizePixel=0,
-    Visible=false,
-    Active=true
-},Gui)
-corner(Main,10)
-stroke(Main,Color3.fromRGB(40,115,205))
-
-local Header=make("Frame", {
-    Size=UDim2.new(1,0,0,42),
-    BackgroundColor3=Color3.fromRGB(20,27,39),
-    BorderSizePixel=0
-},Main)
-corner(Header,9)
-
-make("TextLabel", {
-    Size=UDim2.new(1,-110,1,0),
-    Position=UDim2.fromOffset(13,0),
-    BackgroundTransparency=1,
-    Text="R | REPO SKY",
-    TextColor3=Color3.fromRGB(80,160,255),
-    Font=Enum.Font.GothamBold,
-    TextSize=15,
-    TextXAlignment=Enum.TextXAlignment.Left
-},Header)
-
-local Min=make("TextButton", {
-    Size=UDim2.fromOffset(30,28),
-    Position=UDim2.new(1,-73,0,7),
-    BackgroundColor3=Color3.fromRGB(45,85,135),
-    Text="_",
-    TextColor3=Color3.new(1,1,1),
-    Font=Enum.Font.GothamBold
-},Header)
-corner(Min,5)
-
-local Close=make("TextButton", {
-    Size=UDim2.fromOffset(32,28),
-    Position=UDim2.new(1,-38,0,7),
-    BackgroundColor3=Color3.fromRGB(145,43,50),
-    Text="X",
-    TextColor3=Color3.new(1,1,1),
-    Font=Enum.Font.GothamBold
-},Header)
-corner(Close,5)
-
-local Side=make("Frame", {
-    Position=UDim2.fromOffset(9,51),
-    Size=UDim2.new(0,126,1,-60),
-    BackgroundColor3=Color3.fromRGB(18,23,33),
-    BorderSizePixel=0
-},Main)
-corner(Side,8)
-
-local Content=make("Frame", {
-    Position=UDim2.fromOffset(144,51),
-    Size=UDim2.new(1,-153,1,-60),
-    BackgroundColor3=Color3.fromRGB(17,22,32),
-    BorderSizePixel=0
-},Main)
-corner(Content,8)
-
+local Gui=make("ScreenGui",{Name="RepoTPPanel",ResetOnSpawn=false,DisplayOrder=999},PG)
+local OpenGui=make("ScreenGui",{Name="RepoSkyOpen",ResetOnSpawn=false,DisplayOrder=1000},PG)
+local Open=make("TextButton",{Size=UDim2.fromOffset(42,42),Position=UDim2.new(0,15,.5,-21),BackgroundColor3=Color3.fromRGB(25,130,75),Text="R",TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=19},OpenGui)
+round(Open,12)
+local Main=make("Frame",{Size=UDim2.fromOffset(590,440),Position=UDim2.new(.5,-295,.5,-220),BackgroundColor3=Color3.fromRGB(12,16,24),Visible=false},Gui)
+round(Main,10)
+make("UIStroke",{Color=Color3.fromRGB(45,120,200),Thickness=1.2},Main)
+local Header=make("Frame",{Size=UDim2.new(1,0,0,42),BackgroundColor3=Color3.fromRGB(22,29,42)},Main)
+round(Header,8)
+label(Header,"R | REPO SKY",36)
+local Side=make("Frame",{Position=UDim2.fromOffset(9,50),Size=UDim2.new(0,126,1,-59),BackgroundColor3=Color3.fromRGB(18,23,33)},Main)
+round(Side)
+local Content=make("Frame",{Position=UDim2.fromOffset(144,50),Size=UDim2.new(1,-153,1,-59),BackgroundColor3=Color3.fromRGB(17,22,32)},Main)
+round(Content)
 local Pages={}
-for _,name in ipairs({"PRINCIPAL","VELOCIDADE","CARROS"}) do
-    local page=make("ScrollingFrame", {
-        Name=name,
-        Size=UDim2.fromScale(1,1),
-        BackgroundTransparency=1,
-        BorderSizePixel=0,
-        ScrollBarThickness=5,
-        CanvasSize=UDim2.new(),
-        AutomaticCanvasSize=Enum.AutomaticSize.Y,
-        Visible=false
-    },Content)
-
-    make("UIListLayout", {
-        Padding=UDim.new(0,7),
-        SortOrder=Enum.SortOrder.LayoutOrder
-    },page)
-
-    make("UIPadding", {
-        PaddingTop=UDim.new(0,9),
-        PaddingLeft=UDim.new(0,9),
-        PaddingRight=UDim.new(0,9),
-        PaddingBottom=UDim.new(0,10)
-    },page)
-
-    Pages[name]=page
+for _,n in ipairs({"PRINCIPAL","VELOCIDADE","CARROS"}) do
+ local pg=make("ScrollingFrame",{Name=n,Size=UDim2.fromScale(1,1),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=5,AutomaticCanvasSize=Enum.AutomaticSize.Y,CanvasSize=UDim2.new()},Content)
+ make("UIListLayout",{Padding=UDim.new(0,7)},pg)
+ make("UIPadding",{PaddingTop=UDim.new(0,8),PaddingLeft=UDim.new(0,8),PaddingRight=UDim.new(0,8)},pg)
+ Pages[n]=pg
+ local tab=make("TextButton",{Name=n,Size=UDim2.new(1,-12,0,39),Position=UDim2.fromOffset(6,8+(table.find({"PRINCIPAL","VELOCIDADE","CARROS"},n)-1)*46),BackgroundColor3=Color3.fromRGB(39,46,59),Text=n,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=11},Side)
+ round(tab)
+ track(tab.Activated:Connect(function()
+  for k,v in pairs(Pages) do v.Visible=k==n end
+  for _,b in ipairs(Side:GetChildren()) do if b:IsA("TextButton") then b.BackgroundColor3=b.Name==n and Color3.fromRGB(35,105,185) or Color3.fromRGB(39,46,59) end end
+ end))
 end
-
-local function selectTab(name)
-    for n,p in pairs(Pages) do p.Visible=(n==name) end
-    for _,v in ipairs(Side:GetChildren()) do
-        if v:IsA("TextButton") then
-            v.BackgroundColor3=(v.Name==name)
-                and Color3.fromRGB(35,105,185)
-                or Color3.fromRGB(39,46,59)
-        end
-    end
-end
-
-for i,name in ipairs({"PRINCIPAL","VELOCIDADE","CARROS"}) do
-    local b=make("TextButton", {
-        Name=name,
-        Size=UDim2.new(1,-12,0,39),
-        Position=UDim2.fromOffset(6,8+(i-1)*46),
-        BackgroundColor3=Color3.fromRGB(39,46,59),
-        BorderSizePixel=0,
-        Text=name,
-        TextColor3=Color3.new(1,1,1),
-        Font=Enum.Font.GothamBold,
-        TextSize=11
-    },Side)
-    corner(b,6)
-    connect(b.Activated,function() selectTab(name) end)
-end
-selectTab("PRINCIPAL")
-
--- ARRASTAR PAINEL E BOTAO R
-
-local function draggable(obj,handle)
-    local dragging=false
-    local startPos,startInput
-
-    connect(handle.InputBegan,function(input)
-        if input.UserInputType==Enum.UserInputType.MouseButton1
-        or input.UserInputType==Enum.UserInputType.Touch then
-            dragging=true
-            startInput=input.Position
-            startPos=obj.Position
-        end
-    end)
-
-    connect(UIS.InputChanged,function(input)
-        if dragging and (
-            input.UserInputType==Enum.UserInputType.MouseMovement
-            or input.UserInputType==Enum.UserInputType.Touch
-        ) then
-            local delta=input.Position-startInput
-            obj.Position=UDim2.new(
-                startPos.X.Scale,startPos.X.Offset+delta.X,
-                startPos.Y.Scale,startPos.Y.Offset+delta.Y
-            )
-        end
-    end)
-
-    connect(UIS.InputEnded,function(input)
-        if input.UserInputType==Enum.UserInputType.MouseButton1
-        or input.UserInputType==Enum.UserInputType.Touch then
-            dragging=false
-        end
-    end)
-end
-
-draggable(Main,Header)
-draggable(Open,Open)
-
-connect(Open.Activated,function()
-    if not Closed then Main.Visible=not Main.Visible end
+local function page(n) for k,v in pairs(Pages) do v.Visible=k==n end end
+page("PRINCIPAL")
+local A=Pages.PRINCIPAL
+btn(A,"TP REPO [7]",function()
+ local f=workspace:FindFirstChild("RepoCars")
+ if f then for _,m in ipairs(f:GetChildren()) do local _,mine=owner(m) if mine then teleport(m) return end end end
 end)
-
-connect(Min.Activated,function() Main.Visible=false end)
-connect(Close.Activated,function() Main.Visible=false end)
-
--- ENCERRAR
-
-local End=make("TextButton", {
-    Size=UDim2.fromOffset(88,25),
-    Position=UDim2.new(1,-98,1,-32),
-    BackgroundColor3=Color3.fromRGB(145,43,50),
-    BorderSizePixel=0,
-    Text="ENCERRAR",
-    TextColor3=Color3.new(1,1,1),
-    Font=Enum.Font.GothamBold,
-    TextSize=10,
-    ZIndex=10
-},Main)
-corner(End,5)
-
-connect(End.Activated,function()
-    Closed=true
-    for _,c in ipairs(Connections) do pcall(function() c:Disconnect() end) end
-    Gui:Destroy()
+btn(A,"TP CARRO [8]",function()
+ local f=workspace:FindFirstChild("Cars")
+ if f then for _,m in ipairs(f:GetChildren()) do local _,mine=owner(m) if mine then teleport(m) return end end end
 end)
+btn(A,"VOAR PARA GARAGEM [9]",function()
+ local d=workspace:FindFirstChild("RepoShutterBase")
+ if d and Selected then fly(Selected,d:IsA("BasePart") and d.CFrame or root(d).CFrame) end
+end)
+btn(A,"PARAR TRANSPORTE [P]",stop)
+label(A,"7 REPO | 8 CARRO | 9 VOAR | P PARAR",24)
 
--- PRINCIPAL
-
-local Principal=Pages.PRINCIPAL
-label(Principal,"REPO SKY | CAR DEALERSHIP TYCOON",30)
-label(Principal,"Painel de consulta e configuracao local.",30)
-label(Principal,"TP, TAP e voo nao estao ativos nesta versao.",40)
-
--- VELOCIDADE
-
-local Velocity=Pages.VELOCIDADE
-label(Velocity,"CONFIGURACOES",26)
-
-local function speedInput(title,key)
-    label(Velocity,title,20)
-    local box=make("TextBox", {
-        Size=UDim2.new(1,0,0,32),
-        BackgroundColor3=Color3.fromRGB(29,36,49),
-        TextColor3=Color3.new(1,1,1),
-        Text=tostring(Speed[key]),
-        ClearTextOnFocus=false,
-        Font=Enum.Font.Gotham,
-        TextSize=13
-    },Velocity)
-    corner(box,5)
-
-    connect(box.FocusLost,function()
-        local n=tonumber(box.Text)
-        if n then Speed[key]=math.clamp(n,0,99999) end
-        box.Text=tostring(Speed[key])
-    end)
+local V=Pages.VELOCIDADE
+for _,k in ipairs({"Transport","Ascent","Descent","Height","Freeze"}) do
+ label(V,k.."  "..S[k],22)
+ local b=make("TextBox",{Size=UDim2.new(1,0,0,30),BackgroundColor3=Color3.fromRGB(29,36,49),TextColor3=Color3.new(1,1,1),Text=tostring(S[k]),ClearTextOnFocus=false,Font=Enum.Font.Gotham,TextSize=12},V)
+ round(b)
+ track(b.FocusLost:Connect(function() S[k]=math.max(0,tonumber(b.Text) or S[k]) b.Text=tostring(S[k]) end))
 end
 
-speedInput("Velocidade horizontal","Transport")
-speedInput("Velocidade de subida","Ascent")
-speedInput("Velocidade de descida","Descent")
-speedInput("Altura da subida","Height")
-speedInput("Tempo de congelamento","Freeze")
-
--- CARROS: CATALOGO E PESQUISA
-
-local CarPage=Pages.CARROS
-label(CarPage,"PESQUISAR VEICULOS",24)
-
-local Search=make("TextBox", {
-    Size=UDim2.new(1,0,0,34),
-    BackgroundColor3=Color3.fromRGB(29,36,49),
-    TextColor3=Color3.new(1,1,1),
-    PlaceholderText="Digite o nome do veiculo...",
-    PlaceholderColor3=Color3.fromRGB(145,155,170),
-    Text="",
-    ClearTextOnFocus=false,
-    Font=Enum.Font.Gotham,
-    TextSize=12
-},CarPage)
-corner(Search,5)
-
-local Status=label(CarPage,"Aguardando pesquisa...",24)
-
-local Grid=make("ScrollingFrame", {
-    Size=UDim2.new(1,0,0,300),
-    BackgroundTransparency=1,
-    BorderSizePixel=0,
-    ScrollBarThickness=5,
-    CanvasSize=UDim2.new(),
-    AutomaticCanvasSize=Enum.AutomaticSize.Y
-},CarPage)
-
-make("UIGridLayout", {
-    CellSize=UDim2.new(0,124,0,143),
-    CellPadding=UDim2.fromOffset(7,7),
-    SortOrder=Enum.SortOrder.LayoutOrder
-},Grid)
-
-local function clearGrid()
-    for _,v in ipairs(Grid:GetChildren()) do
-        if v:IsA("Frame") then v:Destroy() end
-    end
+local Car=Pages.CARROS
+local Search=make("TextBox",{Size=UDim2.new(1,0,0,34),BackgroundColor3=Color3.fromRGB(29,36,49),TextColor3=Color3.new(1,1,1),PlaceholderText="Pesquisar carro...",Text="",ClearTextOnFocus=false,Font=Enum.Font.Gotham,TextSize=12},Car)
+round(Search)
+local Status=label(Car,"",22)
+local Grid=make("Frame",{Size=UDim2.new(1,0,0,0),BackgroundTransparency=1},Car)
+local Layout=make("UIGridLayout",{CellSize=UDim2.new(0,155,0,160),CellPadding=UDim2.fromOffset(7,7)},Grid)
+Layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() Grid.Size=UDim2.new(1,0,0,Layout.AbsoluteContentSize.Y) end)
+local function refresh()
+ for _,x in ipairs(Grid:GetChildren()) do if x:IsA("Frame") then x:Destroy() end end
+ local q=string.lower(Search.Text)
+ local count=0
+ for _,m in ipairs(vehicles()) do
+  local name,img,own=info(m)
+  if q=="" or string.find(string.lower(name),q,1,true) or string.find(string.lower(own),q,1,true) then
+   local card=make("Frame",{BackgroundColor3=Color3.fromRGB(27,34,47)},Grid)
+   round(card)
+   make("ImageLabel",{Size=UDim2.new(1,-10,0,85),Position=UDim2.fromOffset(5,5),BackgroundTransparency=1,Image=img,ScaleType=Enum.ScaleType.Fit},card)
+   make("TextLabel",{Size=UDim2.new(1,-8,0,25),Position=UDim2.fromOffset(4,91),BackgroundTransparency=1,Text=name,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=10,TextWrapped=true},card)
+   make("TextLabel",{Size=UDim2.new(1,-8,0,18),Position=UDim2.fromOffset(4,116),BackgroundTransparency=1,Text="Dono: "..own,TextColor3=Color3.fromRGB(145,185,225),Font=Enum.Font.Gotham,TextSize=9,TextWrapped=true},card)
+   local go=make("TextButton",{Size=UDim2.new(1,-10,0,22),Position=UDim2.fromOffset(5,136),BackgroundColor3=Color3.fromRGB(35,95,155),Text="TP CARRO",TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=9},card)
+   round(go,4)
+   track(go.Activated:Connect(function() teleport(m) end))
+   count+=1
+  end
+ end
+ Status.Text=count.." veiculo(s)"
 end
+track(Search:GetPropertyChangedSignal("Text"):Connect(refresh))
+btn(Car,"ATUALIZAR",refresh)
 
-local function addCard(name,image,details)
-    local card=make("Frame", {
-        BackgroundColor3=Color3.fromRGB(27,34,47),
-        BorderSizePixel=0
-    },Grid)
-    corner(card,7)
-
-    local img=make("ImageLabel", {
-        Size=UDim2.new(1,-12,0,82),
-        Position=UDim2.fromOffset(6,6),
-        BackgroundColor3=Color3.fromRGB(19,25,36),
-        BorderSizePixel=0,
-        Image=image or "",
-        ScaleType=Enum.ScaleType.Fit
-    },card)
-    corner(img,5)
-
-    make("TextLabel", {
-        Size=UDim2.new(1,-10,0,28),
-        Position=UDim2.fromOffset(5,91),
-        BackgroundTransparency=1,
-        Text=name,
-        TextColor3=Color3.fromRGB(220,228,240),
-        Font=Enum.Font.GothamBold,
-        TextSize=10,
-        TextWrapped=true
-    },card)
-
-    make("TextLabel", {
-        Size=UDim2.new(1,-10,0,17),
-        Position=UDim2.fromOffset(5,120),
-        BackgroundTransparency=1,
-        Text=details or "",
-        TextColor3=Color3.fromRGB(130,175,220),
-        Font=Enum.Font.Gotham,
-        TextSize=9
-    },card)
+local function drag(obj,handle)
+ local moving,start,pos
+ track(handle.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then moving=true start=i.Position pos=obj.Position end end))
+ track(UIS.InputChanged:Connect(function(i) if moving and (i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseMovement) then local d=i.Position-start obj.Position=UDim2.new(pos.X.Scale,pos.X.Offset+d.X,pos.Y.Scale,pos.Y.Offset+d.Y) end end))
+ track(UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then moving=false end end))
 end
-
-local function getCatalog()
-    local ok,result=pcall(function()
-        return RS:WaitForChild("Data")
-            :WaitForChild("CarShopEntries")
-            :WaitForChild("ById")
-    end)
-    if ok then return result end
-end
-
-local function updateCars()
-    clearGrid()
-    local query=string.lower(Search.Text or "")
-    local count=0
-    local catalog=getCatalog()
-
-    if not catalog then
-        Status.Text="Catalogo CarShopEntries.ById nao encontrado."
-        return
-    end
-
-    for _,entry in ipairs(catalog:GetChildren()) do
-        local display=entry:FindFirstChild("DisplayName")
-        local thumb=entry:FindFirstChild("ThumbnailImage")
-
-        local name=display and tostring(display.Value) or entry.Name
-        local image=thumb and tostring(thumb.Value) or ""
-
-        if query=="" or string.find(string.lower(name),query,1,true) then
-            addCard(name,image,"ID: "..entry.Name)
-            count=count+1
-        end
-    end
-
-    Status.Text=count.." veiculo(s) encontrado(s) no catalogo."
-end
-
-local Refresh=button(CarPage,"ATUALIZAR CATALOGO",Color3.fromRGB(35,105,85))
-connect(Refresh.Activated,updateCars)
-connect(Search:GetPropertyChangedSignal("Text"),updateCars)
-
--- VEICULOS DO JOGADOR
-
-label(CarPage,"SEUS VEICULOS",24)
-
-local function getOwner(model)
-    local stats=model:FindFirstChild("Stats")
-    local owner=stats and stats:FindFirstChild("Owner")
-
-    if owner then
-        local value
-        pcall(function() value=owner.Value end)
-        if value==Player or value==Player.Name or value==Player.UserId then
-            return true
-        end
-    end
-
-    local attribute=model:GetAttribute("Owner")
-    return attribute==Player.Name or attribute==Player.UserId
-end
-
-local function updateOwned()
-    local folder=workspace:FindFirstChild("Cars")
-    if not folder then
-        Status.Text="Workspace.Cars nao encontrado."
-        return
-    end
-
-    local count=0
-    for _,model in ipairs(folder:GetChildren()) do
-        if getOwner(model) then
-            addCard(model.Name,"","VEICULO SEU")
-            count=count+1
-        end
-    end
-
-    Status.Text=count.." veiculo(s) seu(s) encontrado(s)."
-end
-
-local Owned=button(CarPage,"LISTAR MEUS VEICULOS")
-connect(Owned.Activated,updateOwned)
-
-print("[REPO SKY] Painel e pesquisa carregados.")
+drag(Main,Header) drag(Open,Open)
+track(Open.Activated:Connect(function() Main.Visible=not Main.Visible end))
+local Min=make("TextButton",{Size=UDim2.fromOffset(30,28),Position=UDim2.new(1,-73,0,7),BackgroundColor3=Color3.fromRGB(45,85,135),Text="_",TextColor3=Color3.new(1,1,1)},Header)
+local Close=make("TextButton",{Size=UDim2.fromOffset(32,28),Position=UDim2.new(1,-38,0,7),BackgroundColor3=Color3.fromRGB(145,43,50),Text="X",TextColor3=Color3.new(1,1,1)},Header)
+track(Min.Activated:Connect(function() Main.Visible=false end))
+track(Close.Activated:Connect(function() Main.Visible=false end))
+local End=btn(Pages.PRINCIPAL,"ENCERRAR",function()
+ if Closed then return end Closed=true stop()
+ for _,c in ipairs(C) do pcall(function() c:Disconnect() end) end
+ Gui:Destroy() OpenGui:Destroy()
+end)
+track(UIS.InputBegan:Connect(function(i,g)
+ if g or Closed then return end
+ if i.KeyCode==Enum.KeyCode.Seven then local f=workspace:FindFirstChild("RepoCars") if f then for _,m in ipairs(f:GetChildren()) do local _,mine=owner(m) if mine then teleport(m) break end end end
+ elseif i.KeyCode==Enum.KeyCode.Eight then local f=workspace:FindFirstChild("Cars") if f then for _,m in ipairs(f:GetChildren()) do local _,mine=owner(m) if mine then teleport(m) break end end end
+ elseif i.KeyCode==Enum.KeyCode.Nine then local d=workspace:FindFirstChild("RepoShutterBase") if d and Selected then fly(Selected,d.CFrame) end
+ elseif i.KeyCode==Enum.KeyCode.P then stop() end
+end))
+refresh()
