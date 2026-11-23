@@ -9,7 +9,7 @@ for _,n in ipairs({"RepoTPPanel","RepoSkyOpen"}) do local x=PG:FindFirstChild(n)
 
 local S={Transport=600,Ascent=350,Descent=450,Height=685,Freeze=1.5}
 local C,Selected,Flight,Closed={},nil,nil,false
-local function track(c) table.insert(C,c) return c end
+local function track(c) C[#C+1]=c return c end
 local function make(t,p,parent)
  local x=Instance.new(t)
  for k,v in pairs(p or {}) do x[k]=v end
@@ -22,9 +22,7 @@ local function label(parent,txt,h)
 end
 local function btn(parent,txt,fn)
  local b=make("TextButton",{Size=UDim2.new(1,-6,0,34),BackgroundColor3=Color3.fromRGB(38,75,115),Text=txt,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=11},parent)
- round(b)
- track(b.Activated:Connect(fn))
- return b
+ round(b) track(b.Activated:Connect(fn)) return b
 end
 local function root(m)
  if not m then return end
@@ -40,7 +38,7 @@ local function owner(m)
  if typeof(v)=="Instance" then return v.Name,v==P end
  if v==P.Name or v==P.UserId then return P.Name,true end
  if type(v)=="number" then
-  local ok,n=pcall(function() return game:GetService("Players"):GetNameFromUserIdAsync(v) end)
+  local ok,n=pcall(function() return P.Parent:GetNameFromUserIdAsync(v) end)
   if ok then return n,v==P.UserId end
  end
  return tostring(v or "Desconhecido"),false
@@ -52,7 +50,8 @@ end
 local function info(m)
  local ct=m:FindFirstChild("CarType",true)
  local id=ct and tostring(ct.Value)
- local e=id and catalog() and catalog():FindFirstChild(id)
+ local cat=catalog()
+ local e=id and cat and cat:FindFirstChild(id)
  local n=e and e:FindFirstChild("DisplayName")
  local im=e and e:FindFirstChild("ThumbnailImage")
  local own=owner(m)
@@ -64,7 +63,7 @@ local function vehicles()
   local f=workspace:FindFirstChild(folderName)
   if f then for _,m in ipairs(f:GetChildren()) do
    if m:IsA("Model") and root(m) and not seen[m] then
-    seen[m]=true table.insert(out,m)
+    seen[m]=true out[#out+1]=m
    end
   end end
  end
@@ -91,40 +90,64 @@ local function fly(m,dest)
  stop()
  local r=root(m)
  if not r or not dest then return end
+
+ local entrance=dest.LookVector
+ local side=dest.RightVector
+ local target=dest.Position-entrance*4
+ local facing=CFrame.lookAt(target,target+side,dest.UpVector)
  local att=Instance.new("Attachment",r)
  local lv=Instance.new("LinearVelocity",r)
- lv.Attachment0=att lv.RelativeTo=Enum.ActuatorRelativeTo.World lv.MaxForce=math.huge
+ lv.Attachment0=att
+ lv.RelativeTo=Enum.ActuatorRelativeTo.World
+ lv.MaxForce=math.huge
  local ao=Instance.new("AlignOrientation",r)
- ao.Attachment0=att ao.Mode=Enum.OrientationAlignmentMode.OneAttachment
- ao.CFrame=r.CFrame.Rotation ao.MaxTorque=math.huge ao.Responsiveness=35
+ ao.Attachment0=att
+ ao.Mode=Enum.OrientationAlignmentMode.OneAttachment
+ ao.CFrame=facing.Rotation
+ ao.MaxTorque=math.huge
+ ao.Responsiveness=35
+ ao.RigidityEnabled=true
  Flight={lv,att,ao}
+
  local startY=r.Position.Y
+ local highY=startY+S.Height
  local phase=1
  local conn
  conn=Run.Heartbeat:Connect(function()
-  if not r.Parent or not lv.Parent then conn:Disconnect() return end
+  if not r.Parent or not lv.Parent then
+   conn:Disconnect()
+   stop()
+   return
+  end
   local pos=r.Position
-  local target=dest.Position
-  local goal
+  local flat=Vector3.new(pos.X,0,pos.Z)
+  local goalFlat=Vector3.new(target.X,0,target.Z)
+  local distance=(flat-goalFlat).Magnitude
+  local goal,speed
+
   if phase==1 then
-   goal=Vector3.new(pos.X,startY+S.Height,pos.Z)
-   if math.abs(pos.Y-goal.Y)<5 then phase=2 end
+   goal=Vector3.new(pos.X,highY,pos.Z)
+   speed=S.Ascent
+   if math.abs(pos.Y-highY)<5 then phase=2 end
   elseif phase==2 then
-   goal=Vector3.new(target.X,target.Y+8,target.Z)
-   if (Vector3.new(pos.X,0,pos.Z)-Vector3.new(target.X,0,target.Z)).Magnitude<12 then phase=3 end
+   goal=Vector3.new(target.X,highY,target.Z)
+   speed=S.Transport
+   if distance<60 then phase=3 end
   else
    goal=Vector3.new(target.X,target.Y+8,target.Z)
-   if math.abs(pos.Y-goal.Y)<3 then
+   speed=S.Descent
+   if (pos-goal).Magnitude<3 then
     lv.VectorVelocity=Vector3.zero
-    task.delay(S.Freeze,stop)
     conn:Disconnect()
+    task.delay(S.Freeze,stop)
     return
    end
   end
+
   local delta=goal-pos
-  local speed=phase==1 and S.Ascent or phase==3 and S.Descent or S.Transport
   lv.VectorVelocity=delta.Magnitude>1 and delta.Unit*math.min(speed,delta.Magnitude*3) or Vector3.zero
  end)
+ track(conn)
 end
 
 local Gui=make("ScreenGui",{Name="RepoTPPanel",ResetOnSpawn=false,DisplayOrder=999},PG)
@@ -141,33 +164,43 @@ local Side=make("Frame",{Position=UDim2.fromOffset(9,50),Size=UDim2.new(0,126,1,
 round(Side)
 local Content=make("Frame",{Position=UDim2.fromOffset(144,50),Size=UDim2.new(1,-153,1,-59),BackgroundColor3=Color3.fromRGB(17,22,32)},Main)
 round(Content)
+
 local Pages={}
-for _,n in ipairs({"PRINCIPAL","VELOCIDADE","CARROS"}) do
- local pg=make("ScrollingFrame",{Name=n,Size=UDim2.fromScale(1,1),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=5,AutomaticCanvasSize=Enum.AutomaticSize.Y,CanvasSize=UDim2.new()},Content)
+for i,n in ipairs({"PRINCIPAL","VELOCIDADE","CARROS"}) do
+ local pg=make("ScrollingFrame",{Name=n,Size=UDim2.fromScale(1,1),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=5,AutomaticCanvasSize=Enum.AutomaticSize.Y,CanvasSize=UDim2.new(),Visible=i==1},Content)
  make("UIListLayout",{Padding=UDim.new(0,7)},pg)
  make("UIPadding",{PaddingTop=UDim.new(0,8),PaddingLeft=UDim.new(0,8),PaddingRight=UDim.new(0,8)},pg)
  Pages[n]=pg
- local tab=make("TextButton",{Name=n,Size=UDim2.new(1,-12,0,39),Position=UDim2.fromOffset(6,8+(table.find({"PRINCIPAL","VELOCIDADE","CARROS"},n)-1)*46),BackgroundColor3=Color3.fromRGB(39,46,59),Text=n,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=11},Side)
+ local tab=make("TextButton",{Name=n,Size=UDim2.new(1,-12,0,39),Position=UDim2.fromOffset(6,8+(i-1)*46),BackgroundColor3=i==1 and Color3.fromRGB(35,105,185) or Color3.fromRGB(39,46,59),Text=n,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=11},Side)
  round(tab)
  track(tab.Activated:Connect(function()
   for k,v in pairs(Pages) do v.Visible=k==n end
-  for _,b in ipairs(Side:GetChildren()) do if b:IsA("TextButton") then b.BackgroundColor3=b.Name==n and Color3.fromRGB(35,105,185) or Color3.fromRGB(39,46,59) end end
+  for _,b in ipairs(Side:GetChildren()) do
+   if b:IsA("TextButton") then b.BackgroundColor3=b.Name==n and Color3.fromRGB(35,105,185) or Color3.fromRGB(39,46,59) end
+  end
  end))
 end
-local function page(n) for k,v in pairs(Pages) do v.Visible=k==n end end
-page("PRINCIPAL")
+
 local A=Pages.PRINCIPAL
-btn(A,"TP REPO [7]",function()
- local f=workspace:FindFirstChild("RepoCars")
- if f then for _,m in ipairs(f:GetChildren()) do local _,mine=owner(m) if mine then teleport(m) return end end end
-end)
-btn(A,"TP CARRO [8]",function()
- local f=workspace:FindFirstChild("Cars")
- if f then for _,m in ipairs(f:GetChildren()) do local _,mine=owner(m) if mine then teleport(m) return end end end
-end)
+local function ownVehicle(folder)
+ local f=workspace:FindFirstChild(folder)
+ if f then
+  for _,m in ipairs(f:GetChildren()) do
+   if m:IsA("Model") then
+    local _,mine=owner(m)
+    if mine then teleport(m) return end
+   end
+  end
+ end
+end
+btn(A,"TP REPO [7]",function() ownVehicle("RepoCars") end)
+btn(A,"TP CARRO [8]",function() ownVehicle("Cars") end)
 btn(A,"VOAR PARA GARAGEM [9]",function()
  local d=workspace:FindFirstChild("RepoShutterBase")
- if d and Selected then fly(Selected,d:IsA("BasePart") and d.CFrame or root(d).CFrame) end
+ if d and Selected then
+  local part=d:IsA("BasePart") and d or root(d)
+  if part then fly(Selected,part.CFrame) end
+ end
 end)
 btn(A,"PARAR TRANSPORTE [P]",stop)
 label(A,"7 REPO | 8 CARRO | 9 VOAR | P PARAR",24)
@@ -177,7 +210,10 @@ for _,k in ipairs({"Transport","Ascent","Descent","Height","Freeze"}) do
  label(V,k.."  "..S[k],22)
  local b=make("TextBox",{Size=UDim2.new(1,0,0,30),BackgroundColor3=Color3.fromRGB(29,36,49),TextColor3=Color3.new(1,1,1),Text=tostring(S[k]),ClearTextOnFocus=false,Font=Enum.Font.Gotham,TextSize=12},V)
  round(b)
- track(b.FocusLost:Connect(function() S[k]=math.max(0,tonumber(b.Text) or S[k]) b.Text=tostring(S[k]) end))
+ track(b.FocusLost:Connect(function()
+  S[k]=math.max(0,tonumber(b.Text) or S[k])
+  b.Text=tostring(S[k])
+ end))
 end
 
 local Car=Pages.CARROS
@@ -186,9 +222,13 @@ round(Search)
 local Status=label(Car,"",22)
 local Grid=make("Frame",{Size=UDim2.new(1,0,0,0),BackgroundTransparency=1},Car)
 local Layout=make("UIGridLayout",{CellSize=UDim2.new(0,155,0,160),CellPadding=UDim2.fromOffset(7,7)},Grid)
-Layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() Grid.Size=UDim2.new(1,0,0,Layout.AbsoluteContentSize.Y) end)
+track(Layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+ Grid.Size=UDim2.new(1,0,0,Layout.AbsoluteContentSize.Y)
+end))
 local function refresh()
- for _,x in ipairs(Grid:GetChildren()) do if x:IsA("Frame") then x:Destroy() end end
+ for _,x in ipairs(Grid:GetChildren()) do
+  if x:IsA("Frame") then x:Destroy() end
+ end
  local q=string.lower(Search.Text)
  local count=0
  for _,m in ipairs(vehicles()) do
@@ -212,26 +252,47 @@ btn(Car,"ATUALIZAR",refresh)
 
 local function drag(obj,handle)
  local moving,start,pos
- track(handle.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then moving=true start=i.Position pos=obj.Position end end))
- track(UIS.InputChanged:Connect(function(i) if moving and (i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseMovement) then local d=i.Position-start obj.Position=UDim2.new(pos.X.Scale,pos.X.Offset+d.X,pos.Y.Scale,pos.Y.Offset+d.Y) end end))
- track(UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then moving=false end end))
+ track(handle.InputBegan:Connect(function(i)
+  if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then
+   moving=true start=i.Position pos=obj.Position
+  end
+ end))
+ track(UIS.InputChanged:Connect(function(i)
+  if moving and (i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseMovement) then
+   local d=i.Position-start
+   obj.Position=UDim2.new(pos.X.Scale,pos.X.Offset+d.X,pos.Y.Scale,pos.Y.Offset+d.Y)
+  end
+ end))
+ track(UIS.InputEnded:Connect(function(i)
+  if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then moving=false end
+ end))
 end
-drag(Main,Header) drag(Open,Open)
+drag(Main,Header)
+drag(Open,Open)
 track(Open.Activated:Connect(function() Main.Visible=not Main.Visible end))
+
 local Min=make("TextButton",{Size=UDim2.fromOffset(30,28),Position=UDim2.new(1,-73,0,7),BackgroundColor3=Color3.fromRGB(45,85,135),Text="_",TextColor3=Color3.new(1,1,1)},Header)
 local Close=make("TextButton",{Size=UDim2.fromOffset(32,28),Position=UDim2.new(1,-38,0,7),BackgroundColor3=Color3.fromRGB(145,43,50),Text="X",TextColor3=Color3.new(1,1,1)},Header)
 track(Min.Activated:Connect(function() Main.Visible=false end))
 track(Close.Activated:Connect(function() Main.Visible=false end))
-local End=btn(Pages.PRINCIPAL,"ENCERRAR",function()
- if Closed then return end Closed=true stop()
+
+btn(A,"ENCERRAR",function()
+ if Closed then return end
+ Closed=true
+ stop()
  for _,c in ipairs(C) do pcall(function() c:Disconnect() end) end
- Gui:Destroy() OpenGui:Destroy()
+ Gui:Destroy()
+ OpenGui:Destroy()
 end)
+
 track(UIS.InputBegan:Connect(function(i,g)
  if g or Closed then return end
- if i.KeyCode==Enum.KeyCode.Seven then local f=workspace:FindFirstChild("RepoCars") if f then for _,m in ipairs(f:GetChildren()) do local _,mine=owner(m) if mine then teleport(m) break end end end
- elseif i.KeyCode==Enum.KeyCode.Eight then local f=workspace:FindFirstChild("Cars") if f then for _,m in ipairs(f:GetChildren()) do local _,mine=owner(m) if mine then teleport(m) break end end end
- elseif i.KeyCode==Enum.KeyCode.Nine then local d=workspace:FindFirstChild("RepoShutterBase") if d and Selected then fly(Selected,d.CFrame) end
+ if i.KeyCode==Enum.KeyCode.Seven then ownVehicle("RepoCars")
+ elseif i.KeyCode==Enum.KeyCode.Eight then ownVehicle("Cars")
+ elseif i.KeyCode==Enum.KeyCode.Nine then
+  local d=workspace:FindFirstChild("RepoShutterBase")
+  local part=d and (d:IsA("BasePart") and d or root(d))
+  if part and Selected then fly(Selected,part.CFrame) end
  elseif i.KeyCode==Enum.KeyCode.P then stop() end
 end))
 refresh()
