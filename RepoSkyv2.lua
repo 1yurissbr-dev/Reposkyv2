@@ -7,7 +7,7 @@ local UIS=game:GetService("UserInputService")
 local PG=P:WaitForChild("PlayerGui")
 for _,n in ipairs({"RepoTPPanel","RepoSkyOpen"}) do local x=PG:FindFirstChild(n) if x then x:Destroy() end end
 
-local S={Transport=600,Ascent=350,Descent=450,Height=685,Freeze=1.5}
+local S={Transport=600,Ascent=350,Descent=450,Height=685,Freeze=1.5,Distance=9}
 local C,Selected,Flight,Closed={},nil,nil,false
 local function track(c) C[#C+1]=c return c end
 local function make(t,p,parent)
@@ -17,11 +17,11 @@ local function make(t,p,parent)
  return x
 end
 local function round(x,n) make("UICorner",{CornerRadius=UDim.new(0,n or 7)},x) end
-local function label(parent,txt,h)
- return make("TextLabel",{Size=UDim2.new(1,0,0,h or 25),BackgroundTransparency=1,Text=txt,TextColor3=Color3.fromRGB(220,228,240),Font=Enum.Font.Gotham,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left,TextWrapped=true},parent)
+local function label(p,t,h)
+ return make("TextLabel",{Size=UDim2.new(1,0,0,h or 25),BackgroundTransparency=1,Text=t,TextColor3=Color3.fromRGB(220,228,240),Font=Enum.Font.Gotham,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left,TextWrapped=true},p)
 end
-local function btn(parent,txt,fn)
- local b=make("TextButton",{Size=UDim2.new(1,-6,0,34),BackgroundColor3=Color3.fromRGB(38,75,115),Text=txt,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=11},parent)
+local function btn(p,t,fn)
+ local b=make("TextButton",{Size=UDim2.new(1,-6,0,34),BackgroundColor3=Color3.fromRGB(38,75,115),Text=t,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=11},p)
  round(b) track(b.Activated:Connect(fn)) return b
 end
 local function root(m)
@@ -29,56 +29,129 @@ local function root(m)
  if m:IsA("BasePart") then return m end
  return m.PrimaryPart or m:FindFirstChild("HumanoidRootPart") or m:FindFirstChildWhichIsA("BasePart",true)
 end
+local function playerName(v)
+ if typeof(v)=="Instance" then
+  if v:IsA("Player") then return v.Name,v==P end
+  if v:IsA("Model") then
+   local pl=game:GetService("Players"):FindFirstChild(v.Name)
+   if pl then return pl.Name,pl==P end
+  end
+ end
+ if type(v)=="number" then
+  if v==P.UserId then return P.Name,true end
+  local pl=game:GetService("Players"):GetPlayerByUserId(v)
+  if pl then return pl.Name,false end
+  local ok,n=pcall(function() return P.Parent:GetNameFromUserIdAsync(v) end)
+  if ok then return n,false end
+ elseif type(v)=="string" then
+  local pl=game:GetService("Players"):FindFirstChild(v)
+  if pl then return pl.Name,pl==P end
+  for _,p in ipairs(game:GetService("Players"):GetPlayers()) do
+   if p.DisplayName==v then return p.Name,p==P end
+  end
+  return v,v==P.Name
+ end
+ return "Desconhecido",false
+end
 local function owner(m)
  local s=m:FindFirstChild("Stats")
  local o=s and s:FindFirstChild("Owner")
  local v
- if o then pcall(function() v=o.Value end) end
- v=v or m:GetAttribute("Owner")
- if typeof(v)=="Instance" then return v.Name,v==P end
- if v==P.Name or v==P.UserId then return P.Name,true end
- if type(v)=="number" then
-  local ok,n=pcall(function() return P.Parent:GetNameFromUserIdAsync(v) end)
-  if ok then return n,v==P.UserId end
+ if o then
+  pcall(function()
+   if o:IsA("ObjectValue") or o:IsA("ValueBase") then v=o.Value end
+  end)
  end
- return tostring(v or "Desconhecido"),false
+ v=v or m:GetAttribute("Owner")
+ return playerName(v)
 end
 local function catalog()
- local ok,x=pcall(function() return RS.Data.CarShopEntries.ById end)
+ local ok,x=pcall(function() return RS:WaitForChild("Data"):WaitForChild("CarShopEntries"):WaitForChild("ById") end)
  return ok and x
+end
+local function imageId(v)
+ if v==nil then return "" end
+ local s=tostring(v)
+ if s=="" then return "" end
+ if s:match("^%d+$") then return "rbxassetid://"..s end
+ return s
 end
 local function info(m)
  local ct=m:FindFirstChild("CarType",true)
  local id=ct and tostring(ct.Value)
  local cat=catalog()
  local e=id and cat and cat:FindFirstChild(id)
- local n=e and e:FindFirstChild("DisplayName")
- local im=e and e:FindFirstChild("ThumbnailImage")
+ local function field(obj,n)
+  if not obj then return nil end
+  local x=obj:FindFirstChild(n)
+  if x then
+   local ok,v=pcall(function() return x.Value end)
+   if ok and v~=nil then return v end
+  end
+  return obj:GetAttribute(n)
+ end
+ local name=field(e,"DisplayName") or (e and e:GetAttribute("DisplayName")) or m.Name
+ local img=field(e,"ThumbnailImage") or field(e,"Image") or ""
  local own=owner(m)
- return n and tostring(n.Value) or m.Name,im and tostring(im.Value) or "",own,id
+ return tostring(name),imageId(img),own,id
 end
 local function vehicles()
  local out,seen={},{}
  for _,folderName in ipairs({"Cars","RepoCars"}) do
   local f=workspace:FindFirstChild(folderName)
-  if f then for _,m in ipairs(f:GetChildren()) do
-   if m:IsA("Model") and root(m) and not seen[m] then
-    seen[m]=true out[#out+1]=m
+  if f then
+   for _,m in ipairs(f:GetChildren()) do
+    if m:IsA("Model") and root(m) and not seen[m] then
+     seen[m]=true out[#out+1]=m
+    end
    end
-  end end
+  end
  end
  return out
+end
+local function seatedCar()
+ local ch=P.Character
+ local hum=ch and ch:FindFirstChildOfClass("Humanoid")
+ local seat=hum and hum.SeatPart
+ if not seat then return end
+ local m=seat:FindFirstAncestorOfClass("Model")
+ while m and m.Parent do
+  if m.Parent==workspace:FindFirstChild("Cars") or m.Parent==workspace:FindFirstChild("RepoCars") then return m end
+  m=m.Parent:IsA("Model") and m.Parent or nil
+ end
 end
 local function teleport(m)
  local ch=P.Character
  local hrp=ch and ch:FindFirstChild("HumanoidRootPart")
  local r=root(m)
  if not hrp or not r then return end
- hrp.CFrame=r.CFrame*CFrame.new(0,5,0)
  Selected=m
  local seat=m:FindFirstChildWhichIsA("VehicleSeat",true)
  local hum=ch:FindFirstChildOfClass("Humanoid")
- if seat and hum then task.wait(.15) seat:Sit(hum) end
+ if seat and hum then
+  if hum.SeatPart~=seat then
+   hrp.CFrame=seat.CFrame*CFrame.new(0,3,0)
+   task.wait(.2)
+   if seat.Parent and hum.Parent then seat:Sit(hum) end
+  end
+ else
+  hrp.CFrame=r.CFrame*CFrame.new(0,5,0)
+ end
+end
+local function chooseCar()
+ local m=seatedCar()
+ if m then Selected=m return m end
+ for _,folder in ipairs({"Cars","RepoCars"}) do
+  local f=workspace:FindFirstChild(folder)
+  if f then
+   for _,v in ipairs(f:GetChildren()) do
+    if v:IsA("Model") then
+     local _,mine=owner(v)
+     if mine then Selected=v return v end
+    end
+   end
+  end
+ end
 end
 local function stop()
  if Flight then
@@ -90,11 +163,8 @@ local function fly(m,dest)
  stop()
  local r=root(m)
  if not r or not dest then return end
-
- local entrance=dest.LookVector
- local side=dest.RightVector
- local target=dest.Position-entrance*4
- local facing=CFrame.lookAt(target,target+side,dest.UpVector)
+ local target=dest.Position-dest.LookVector*S.Distance
+ local facing=CFrame.lookAt(target,target+dest.RightVector,dest.UpVector)
  local att=Instance.new("Attachment",r)
  local lv=Instance.new("LinearVelocity",r)
  lv.Attachment0=att
@@ -108,23 +178,16 @@ local function fly(m,dest)
  ao.Responsiveness=35
  ao.RigidityEnabled=true
  Flight={lv,att,ao}
-
- local startY=r.Position.Y
- local highY=startY+S.Height
+ local highY=r.Position.Y+S.Height
  local phase=1
  local conn
  conn=Run.Heartbeat:Connect(function()
-  if not r.Parent or not lv.Parent then
-   conn:Disconnect()
-   stop()
-   return
-  end
+  if not r.Parent or not lv.Parent then conn:Disconnect() stop() return end
   local pos=r.Position
   local flat=Vector3.new(pos.X,0,pos.Z)
   local goalFlat=Vector3.new(target.X,0,target.Z)
   local distance=(flat-goalFlat).Magnitude
   local goal,speed
-
   if phase==1 then
    goal=Vector3.new(pos.X,highY,pos.Z)
    speed=S.Ascent
@@ -143,7 +206,6 @@ local function fly(m,dest)
     return
    end
   end
-
   local delta=goal-pos
   lv.VectorVelocity=delta.Magnitude>1 and delta.Unit*math.min(speed,delta.Magnitude*3) or Vector3.zero
  end)
@@ -182,8 +244,8 @@ for i,n in ipairs({"PRINCIPAL","VELOCIDADE","CARROS"}) do
 end
 
 local A=Pages.PRINCIPAL
-local function ownVehicle(folder)
- local f=workspace:FindFirstChild(folder)
+btn(A,"TP REPO [7]",function()
+ local f=workspace:FindFirstChild("RepoCars")
  if f then
   for _,m in ipairs(f:GetChildren()) do
    if m:IsA("Model") then
@@ -192,22 +254,23 @@ local function ownVehicle(folder)
    end
   end
  end
-end
-btn(A,"TP REPO [7]",function() ownVehicle("RepoCars") end)
-btn(A,"TP CARRO [8]",function() ownVehicle("Cars") end)
+end)
+btn(A,"TP CARRO [8]",function()
+ local m=seatedCar() or chooseCar()
+ if m then teleport(m) end
+end)
 btn(A,"VOAR PARA GARAGEM [9]",function()
+ local m=seatedCar() or Selected
  local d=workspace:FindFirstChild("RepoShutterBase")
- if d and Selected then
-  local part=d:IsA("BasePart") and d or root(d)
-  if part then fly(Selected,part.CFrame) end
- end
+ local part=d and (d:IsA("BasePart") and d or root(d))
+ if m and part then Selected=m fly(m,part.CFrame) end
 end)
 btn(A,"PARAR TRANSPORTE [P]",stop)
 label(A,"7 REPO | 8 CARRO | 9 VOAR | P PARAR",24)
 
 local V=Pages.VELOCIDADE
-for _,k in ipairs({"Transport","Ascent","Descent","Height","Freeze"}) do
- label(V,k.."  "..S[k],22)
+for _,k in ipairs({"Transport","Ascent","Descent","Height","Freeze","Distance"}) do
+ label(V,k=="Distance" and "Distância da garagem (studs)  "..S[k] or k.."  "..S[k],22)
  local b=make("TextBox",{Size=UDim2.new(1,0,0,30),BackgroundColor3=Color3.fromRGB(29,36,49),TextColor3=Color3.new(1,1,1),Text=tostring(S[k]),ClearTextOnFocus=false,Font=Enum.Font.Gotham,TextSize=12},V)
  round(b)
  track(b.FocusLost:Connect(function()
@@ -217,7 +280,7 @@ for _,k in ipairs({"Transport","Ascent","Descent","Height","Freeze"}) do
 end
 
 local Car=Pages.CARROS
-local Search=make("TextBox",{Size=UDim2.new(1,0,0,34),BackgroundColor3=Color3.fromRGB(29,36,49),TextColor3=Color3.new(1,1,1),PlaceholderText="Pesquisar carro...",Text="",ClearTextOnFocus=false,Font=Enum.Font.Gotham,TextSize=12},Car)
+local Search=make("TextBox",{Size=UDim2.new(1,0,0,34),BackgroundColor3=Color3.fromRGB(29,36,49),TextColor3=Color3.new(1,1,1),PlaceholderText="Pesquisar carro ou dono...",Text="",ClearTextOnFocus=false,Font=Enum.Font.Gotham,TextSize=12},Car)
 round(Search)
 local Status=label(Car,"",22)
 local Grid=make("Frame",{Size=UDim2.new(1,0,0,0),BackgroundTransparency=1},Car)
@@ -245,7 +308,7 @@ local function refresh()
    count+=1
   end
  end
- Status.Text=count.." veiculo(s)"
+ Status.Text=count.." veículo(s), incluindo Repos quando encontrados"
 end
 track(Search:GetPropertyChangedSignal("Text"):Connect(refresh))
 btn(Car,"ATUALIZAR",refresh)
@@ -270,12 +333,10 @@ end
 drag(Main,Header)
 drag(Open,Open)
 track(Open.Activated:Connect(function() Main.Visible=not Main.Visible end))
-
 local Min=make("TextButton",{Size=UDim2.fromOffset(30,28),Position=UDim2.new(1,-73,0,7),BackgroundColor3=Color3.fromRGB(45,85,135),Text="_",TextColor3=Color3.new(1,1,1)},Header)
 local Close=make("TextButton",{Size=UDim2.fromOffset(32,28),Position=UDim2.new(1,-38,0,7),BackgroundColor3=Color3.fromRGB(145,43,50),Text="X",TextColor3=Color3.new(1,1,1)},Header)
 track(Min.Activated:Connect(function() Main.Visible=false end))
 track(Close.Activated:Connect(function() Main.Visible=false end))
-
 btn(A,"ENCERRAR",function()
  if Closed then return end
  Closed=true
@@ -284,15 +345,19 @@ btn(A,"ENCERRAR",function()
  Gui:Destroy()
  OpenGui:Destroy()
 end)
-
 track(UIS.InputBegan:Connect(function(i,g)
  if g or Closed then return end
- if i.KeyCode==Enum.KeyCode.Seven then ownVehicle("RepoCars")
- elseif i.KeyCode==Enum.KeyCode.Eight then ownVehicle("Cars")
+ if i.KeyCode==Enum.KeyCode.Seven then
+  local f=workspace:FindFirstChild("RepoCars")
+  if f then for _,m in ipairs(f:GetChildren()) do if m:IsA("Model") then local _,mine=owner(m) if mine then teleport(m) break end end end end
+ elseif i.KeyCode==Enum.KeyCode.Eight then
+  local m=seatedCar() or chooseCar()
+  if m then teleport(m) end
  elseif i.KeyCode==Enum.KeyCode.Nine then
+  local m=seatedCar() or Selected
   local d=workspace:FindFirstChild("RepoShutterBase")
   local part=d and (d:IsA("BasePart") and d or root(d))
-  if part and Selected then fly(Selected,part.CFrame) end
+  if m and part then fly(m,part.CFrame) end
  elseif i.KeyCode==Enum.KeyCode.P then stop() end
 end))
 refresh()
