@@ -29,80 +29,60 @@ local function root(m)
  if m:IsA("BasePart") then return m end
  return m.PrimaryPart or m:FindFirstChild("HumanoidRootPart") or m:FindFirstChildWhichIsA("BasePart",true)
 end
-local function playerName(v)
- if typeof(v)=="Instance" then
-  if v:IsA("Player") then return v.Name,v==P end
-  if v:IsA("Model") then
-   local pl=game:GetService("Players"):FindFirstChild(v.Name)
-   if pl then return pl.Name,pl==P end
-  end
- end
- if type(v)=="number" then
-  if v==P.UserId then return P.Name,true end
-  local pl=game:GetService("Players"):GetPlayerByUserId(v)
-  if pl then return pl.Name,false end
-  local ok,n=pcall(function() return P.Parent:GetNameFromUserIdAsync(v) end)
-  if ok then return n,false end
- elseif type(v)=="string" then
-  local pl=game:GetService("Players"):FindFirstChild(v)
-  if pl then return pl.Name,pl==P end
-  for _,p in ipairs(game:GetService("Players"):GetPlayers()) do
-   if p.DisplayName==v then return p.Name,p==P end
-  end
-  return v,v==P.Name
- end
- return "Desconhecido",false
-end
 local function owner(m)
  local s=m:FindFirstChild("Stats")
  local o=s and s:FindFirstChild("Owner")
  local v
- if o then
-  pcall(function()
-   if o:IsA("ObjectValue") or o:IsA("ValueBase") then v=o.Value end
-  end)
- end
+ if o then pcall(function() v=o.Value end) end
  v=v or m:GetAttribute("Owner")
- return playerName(v)
+ if typeof(v)=="Instance" then return v.Name end
+ if type(v)=="number" then
+  if v==P.UserId then return P.Name end
+  local pl=game:GetService("Players"):GetPlayerByUserId(v)
+  if pl then return pl.Name end
+  local ok,n=pcall(function() return P.Parent:GetNameFromUserIdAsync(v) end)
+  if ok then return n end
+ elseif type(v)=="string" then
+  local pl=game:GetService("Players"):FindFirstChild(v)
+  if pl then return pl.Name end
+  return v
+ end
+ return "Desconhecido"
+end
+local function value(obj,key)
+ if not obj then return nil end
+ local x=obj:FindFirstChild(key,true)
+ if x then
+  local ok,v=pcall(function() return x.Value end)
+  if ok and v~=nil then return v end
+ end
+ return obj:GetAttribute(key)
 end
 local function catalog()
- local ok,x=pcall(function() return RS:WaitForChild("Data"):WaitForChild("CarShopEntries"):WaitForChild("ById") end)
- return ok and x
-end
-local function imageId(v)
- if v==nil then return "" end
- local s=tostring(v)
- if s=="" then return "" end
- if s:match("^%d+$") then return "rbxassetid://"..s end
- return s
+ local d=RS:FindFirstChild("Data")
+ local c=d and d:FindFirstChild("CarShopEntries")
+ return c and c:FindFirstChild("ById")
 end
 local function info(m)
  local ct=m:FindFirstChild("CarType",true)
  local id=ct and tostring(ct.Value)
  local cat=catalog()
- local e=id and cat and cat:FindFirstChild(id)
- local function field(obj,n)
-  if not obj then return nil end
-  local x=obj:FindFirstChild(n)
-  if x then
-   local ok,v=pcall(function() return x.Value end)
-   if ok and v~=nil then return v end
-  end
-  return obj:GetAttribute(n)
- end
- local name=field(e,"DisplayName") or (e and e:GetAttribute("DisplayName")) or m.Name
- local img=field(e,"ThumbnailImage") or field(e,"Image") or ""
- local own=owner(m)
- return tostring(name),imageId(img),own,id
+ local e=id and cat and cat:FindFirstChild(id,true)
+ local name=value(e,"DisplayName") or value(m,"DisplayName") or m.Name
+ local img=value(e,"ThumbnailImage") or value(e,"Image") or value(m,"ThumbnailImage") or ""
+ img=tostring(img)
+ if img:match("^%d+$") then img="rbxassetid://"..img end
+ return tostring(name),img,owner(m),id
 end
 local function vehicles()
  local out,seen={},{}
  for _,folderName in ipairs({"Cars","RepoCars"}) do
   local f=workspace:FindFirstChild(folderName)
   if f then
-   for _,m in ipairs(f:GetChildren()) do
-    if m:IsA("Model") and root(m) and not seen[m] then
-     seen[m]=true out[#out+1]=m
+   for _,m in ipairs(f:GetDescendants()) do
+    if m:IsA("Model") and not seen[m] and root(m) then
+     seen[m]=true
+     out[#out+1]=m
     end
    end
   end
@@ -115,19 +95,20 @@ local function seatedCar()
  local seat=hum and hum.SeatPart
  if not seat then return end
  local m=seat:FindFirstAncestorOfClass("Model")
- while m and m.Parent do
-  if m.Parent==workspace:FindFirstChild("Cars") or m.Parent==workspace:FindFirstChild("RepoCars") then return m end
-  m=m.Parent:IsA("Model") and m.Parent or nil
+ while m do
+  local f=m.Parent
+  if f==workspace:FindFirstChild("Cars") or f==workspace:FindFirstChild("RepoCars") then return m end
+  m=f and f:IsA("Model") and f or nil
  end
 end
 local function teleport(m)
  local ch=P.Character
  local hrp=ch and ch:FindFirstChild("HumanoidRootPart")
+ local hum=ch and ch:FindFirstChildOfClass("Humanoid")
  local r=root(m)
  if not hrp or not r then return end
  Selected=m
  local seat=m:FindFirstChildWhichIsA("VehicleSeat",true)
- local hum=ch:FindFirstChildOfClass("Humanoid")
  if seat and hum then
   if hum.SeatPart~=seat then
    hrp.CFrame=seat.CFrame*CFrame.new(0,3,0)
@@ -146,8 +127,12 @@ local function chooseCar()
   if f then
    for _,v in ipairs(f:GetChildren()) do
     if v:IsA("Model") then
-     local _,mine=owner(v)
-     if mine then Selected=v return v end
+     local s=v:FindFirstChild("Stats")
+     local o=s and s:FindFirstChild("Owner")
+     local own=o and o.Value
+     if own==P or own==P.Name or own==P.UserId or v:GetAttribute("Owner")==P.Name or v:GetAttribute("Owner")==P.UserId then
+      Selected=v return v
+     end
     end
    end
   end
@@ -163,7 +148,7 @@ local function fly(m,dest)
  stop()
  local r=root(m)
  if not r or not dest then return end
- local target=dest.Position-dest.LookVector*S.Distance
+ local target=dest.Position+dest.LookVector*S.Distance
  local facing=CFrame.lookAt(target,target+dest.RightVector,dest.UpVector)
  local att=Instance.new("Attachment",r)
  local lv=Instance.new("LinearVelocity",r)
@@ -244,17 +229,22 @@ for i,n in ipairs({"PRINCIPAL","VELOCIDADE","CARROS"}) do
 end
 
 local A=Pages.PRINCIPAL
-btn(A,"TP REPO [7]",function()
- local f=workspace:FindFirstChild("RepoCars")
+local function ownVehicle(folder)
+ local f=workspace:FindFirstChild(folder)
  if f then
   for _,m in ipairs(f:GetChildren()) do
    if m:IsA("Model") then
-    local _,mine=owner(m)
-    if mine then teleport(m) return end
+    local s=m:FindFirstChild("Stats")
+    local o=s and s:FindFirstChild("Owner")
+    local v=o and o.Value
+    if v==P or v==P.Name or v==P.UserId or m:GetAttribute("Owner")==P.Name or m:GetAttribute("Owner")==P.UserId then
+     teleport(m) return
+    end
    end
   end
  end
-end)
+end
+btn(A,"TP REPO [7]",function() ownVehicle("RepoCars") end)
 btn(A,"TP CARRO [8]",function()
  local m=seatedCar() or chooseCar()
  if m then teleport(m) end
@@ -270,7 +260,7 @@ label(A,"7 REPO | 8 CARRO | 9 VOAR | P PARAR",24)
 
 local V=Pages.VELOCIDADE
 for _,k in ipairs({"Transport","Ascent","Descent","Height","Freeze","Distance"}) do
- label(V,k=="Distance" and "Distância da garagem (studs)  "..S[k] or k.."  "..S[k],22)
+ label(V,(k=="Distance" and "Distância da garagem" or k).."  "..S[k],22)
  local b=make("TextBox",{Size=UDim2.new(1,0,0,30),BackgroundColor3=Color3.fromRGB(29,36,49),TextColor3=Color3.new(1,1,1),Text=tostring(S[k]),ClearTextOnFocus=false,Font=Enum.Font.Gotham,TextSize=12},V)
  round(b)
  track(b.FocusLost:Connect(function()
@@ -289,14 +279,12 @@ track(Layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
  Grid.Size=UDim2.new(1,0,0,Layout.AbsoluteContentSize.Y)
 end))
 local function refresh()
- for _,x in ipairs(Grid:GetChildren()) do
-  if x:IsA("Frame") then x:Destroy() end
- end
+ for _,x in ipairs(Grid:GetChildren()) do if x:IsA("Frame") then x:Destroy() end end
  local q=string.lower(Search.Text)
  local count=0
  for _,m in ipairs(vehicles()) do
   local name,img,own=info(m)
-  if q=="" or string.find(string.lower(name),q,1,true) or string.find(string.lower(own),q,1,true) then
+  if q=="" or name:lower():find(q,1,true) or own:lower():find(q,1,true) then
    local card=make("Frame",{BackgroundColor3=Color3.fromRGB(27,34,47)},Grid)
    round(card)
    make("ImageLabel",{Size=UDim2.new(1,-10,0,85),Position=UDim2.fromOffset(5,5),BackgroundTransparency=1,Image=img,ScaleType=Enum.ScaleType.Fit},card)
@@ -308,7 +296,7 @@ local function refresh()
    count+=1
   end
  end
- Status.Text=count.." veículo(s), incluindo Repos quando encontrados"
+ Status.Text=count.." veículo(s) encontrados"
 end
 track(Search:GetPropertyChangedSignal("Text"):Connect(refresh))
 btn(Car,"ATUALIZAR",refresh)
@@ -316,9 +304,7 @@ btn(Car,"ATUALIZAR",refresh)
 local function drag(obj,handle)
  local moving,start,pos
  track(handle.InputBegan:Connect(function(i)
-  if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then
-   moving=true start=i.Position pos=obj.Position
-  end
+  if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then moving=true start=i.Position pos=obj.Position end
  end))
  track(UIS.InputChanged:Connect(function(i)
   if moving and (i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseMovement) then
@@ -339,17 +325,13 @@ track(Min.Activated:Connect(function() Main.Visible=false end))
 track(Close.Activated:Connect(function() Main.Visible=false end))
 btn(A,"ENCERRAR",function()
  if Closed then return end
- Closed=true
- stop()
+ Closed=true stop()
  for _,c in ipairs(C) do pcall(function() c:Disconnect() end) end
- Gui:Destroy()
- OpenGui:Destroy()
+ Gui:Destroy() OpenGui:Destroy()
 end)
 track(UIS.InputBegan:Connect(function(i,g)
  if g or Closed then return end
- if i.KeyCode==Enum.KeyCode.Seven then
-  local f=workspace:FindFirstChild("RepoCars")
-  if f then for _,m in ipairs(f:GetChildren()) do if m:IsA("Model") then local _,mine=owner(m) if mine then teleport(m) break end end end end
+ if i.KeyCode==Enum.KeyCode.Seven then ownVehicle("RepoCars")
  elseif i.KeyCode==Enum.KeyCode.Eight then
   local m=seatedCar() or chooseCar()
   if m then teleport(m) end
