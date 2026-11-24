@@ -1,0 +1,87 @@
+name: Atualizar códigos
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Procurar códigos novos
+        run: |
+          python - <<'PY'
+          import json
+          import re
+          import urllib.request
+          from pathlib import Path
+
+          url = "https://games.roblox.com/v1/games?universeIds=605887098"
+          req = urllib.request.Request(
+              url,
+              headers={"User-Agent": "RepoSky-CodeUpdater/1.0"}
+          )
+
+          with urllib.request.urlopen(req, timeout=30) as r:
+              data = json.load(r)
+
+          games = data.get("data", [])
+          if not games:
+              raise SystemExit("Não foi possível consultar o jogo.")
+
+          description = games[0].get("description", "") or ""
+
+          patterns = [
+              r'(?i)(?:NEW\s+)?CODE\s*[:：]?\s*["\']([A-Za-z0-9_]{3,})["\']',
+              r'(?i)USE\s+CODE\s+["\']([A-Za-z0-9_]{3,})["\']',
+          ]
+
+          found = []
+          for pattern in patterns:
+              found.extend(re.findall(pattern, description))
+
+          path = Path("codes.json")
+          current = json.loads(path.read_text(encoding="utf-8"))
+          codes = current.get("codes", [])
+
+          existing = {str(c).casefold() for c in codes}
+
+          for code in found:
+              if code.casefold() not in existing:
+                  codes.append(code)
+                  existing.add(code.casefold())
+                  print("Novo código:", code)
+
+          current["codes"] = codes
+          path.write_text(
+              json.dumps(current, indent=2, ensure_ascii=False) + "\n",
+              encoding="utf-8"
+          )
+          PY
+
+      - name: Salvar alterações
+        run: |
+          if git diff --quiet -- codes.json; then
+            echo "Nenhum código novo encontrado."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add codes.json
+          git commit -m "Atualiza códigos"
+          git push
