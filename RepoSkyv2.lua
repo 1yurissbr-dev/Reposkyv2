@@ -7,7 +7,7 @@ local UIS=game:GetService("UserInputService")
 local PG=P:WaitForChild("PlayerGui")
 for _,n in ipairs({"RepoTPPanel","RepoSkyOpen"}) do local x=PG:FindFirstChild(n) if x then x:Destroy() end end
 
-local S={Transport=600,Ascent=350,Descent=450,Height=685,Freeze=1.5,Distance=9}
+local S={Transport=9999,Ascent=9999,Descent=9999,Height=400,Freeze=.25,Distance=16}
 local C,Selected,Flight,Closed={},nil,nil,false
 local function track(c) C[#C+1]=c return c end
 local function make(t,p,parent)
@@ -65,7 +65,8 @@ local function catalog()
 end
 local function info(m)
  local ct=m:FindFirstChild("CarType",true)
- local id=ct and tostring(ct.Value)
+ local id
+ if ct then pcall(function() id=tostring(ct.Value) end) end
  local cat=catalog()
  local e=id and cat and cat:FindFirstChild(id,true)
  local name=value(e,"DisplayName") or value(m,"DisplayName") or m.Name
@@ -74,16 +75,31 @@ local function info(m)
  if img:match("^%d+$") then img="rbxassetid://"..img end
  return tostring(name),img,owner(m),id
 end
+
+-- DETECÇÃO AMPLIADA DE VEÍCULOS
+local function isVehicle(m)
+ if not m:IsA("Model") or not root(m) then return false end
+ if m:FindFirstChildWhichIsA("VehicleSeat",true) then return true end
+ if m:FindFirstChild("CarType",true) then return true end
+ local stats=m:FindFirstChild("Stats")
+ if stats and stats:FindFirstChild("Owner") then return true end
+ if m:GetAttribute("Owner")~=nil then return true end
+ local par=m.Parent
+ return par and (par.Name=="Cars" or par.Name=="RepoCars")
+end
 local function vehicles()
  local out,seen={},{}
- for _,folderName in ipairs({"Cars","RepoCars"}) do
-  local f=workspace:FindFirstChild(folderName)
-  if f then
-   for _,m in ipairs(f:GetDescendants()) do
-    if m:IsA("Model") and not seen[m] and root(m) then
-     seen[m]=true
-     out[#out+1]=m
-    end
+ for _,m in ipairs(workspace:GetDescendants()) do
+  if m:IsA("Model") and isVehicle(m) then
+   local chosen=m
+   local par=m.Parent
+   while par and par~=workspace do
+    if par:IsA("Model") and isVehicle(par) then chosen=par end
+    par=par.Parent
+   end
+   if not seen[chosen] then
+    seen[chosen]=true
+    out[#out+1]=chosen
    end
   end
  end
@@ -96,9 +112,8 @@ local function seatedCar()
  if not seat then return end
  local m=seat:FindFirstAncestorOfClass("Model")
  while m do
-  local f=m.Parent
-  if f==workspace:FindFirstChild("Cars") or f==workspace:FindFirstChild("RepoCars") then return m end
-  m=f and f:IsA("Model") and f or nil
+  if isVehicle(m) then return m end
+  m=m.Parent and m.Parent:FindFirstAncestorOfClass("Model")
  end
 end
 local function teleport(m)
@@ -122,19 +137,14 @@ end
 local function chooseCar()
  local m=seatedCar()
  if m then Selected=m return m end
- for _,folder in ipairs({"Cars","RepoCars"}) do
-  local f=workspace:FindFirstChild(folder)
-  if f then
-   for _,v in ipairs(f:GetChildren()) do
-    if v:IsA("Model") then
-     local s=v:FindFirstChild("Stats")
-     local o=s and s:FindFirstChild("Owner")
-     local own=o and o.Value
-     if own==P or own==P.Name or own==P.UserId or v:GetAttribute("Owner")==P.Name or v:GetAttribute("Owner")==P.UserId then
-      Selected=v return v
-     end
-    end
-   end
+ for _,v in ipairs(vehicles()) do
+  local s=v:FindFirstChild("Stats")
+  local o=s and s:FindFirstChild("Owner")
+  local own
+  if o then pcall(function() own=o.Value end) end
+  local attr=v:GetAttribute("Owner")
+  if own==P or own==P.Name or own==P.UserId or attr==P.Name or attr==P.UserId then
+   Selected=v return v
   end
  end
 end
@@ -213,12 +223,12 @@ local Content=make("Frame",{Position=UDim2.fromOffset(144,50),Size=UDim2.new(1,-
 round(Content)
 
 local Pages={}
-for i,n in ipairs({"PRINCIPAL","VELOCIDADE","CARROS"}) do
+for i,n in ipairs({"PRINCIPAL","VELOCIDADE","CARROS","CÓDIGOS"}) do
  local pg=make("ScrollingFrame",{Name=n,Size=UDim2.fromScale(1,1),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=5,AutomaticCanvasSize=Enum.AutomaticSize.Y,CanvasSize=UDim2.new(),Visible=i==1},Content)
  make("UIListLayout",{Padding=UDim.new(0,7)},pg)
  make("UIPadding",{PaddingTop=UDim.new(0,8),PaddingLeft=UDim.new(0,8),PaddingRight=UDim.new(0,8)},pg)
  Pages[n]=pg
- local tab=make("TextButton",{Name=n,Size=UDim2.new(1,-12,0,39),Position=UDim2.fromOffset(6,8+(i-1)*46),BackgroundColor3=i==1 and Color3.fromRGB(35,105,185) or Color3.fromRGB(39,46,59),Text=n,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=11},Side)
+ local tab=make("TextButton",{Name=n,Size=UDim2.new(1,-12,0,39),Position=UDim2.fromOffset(6,8+(i-1)*46),BackgroundColor3=i==1 and Color3.fromRGB(35,105,185) or Color3.fromRGB(39,46,59),Text=n,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=10},Side)
  round(tab)
  track(tab.Activated:Connect(function()
   for k,v in pairs(Pages) do v.Visible=k==n end
@@ -230,16 +240,20 @@ end
 
 local A=Pages.PRINCIPAL
 local function ownVehicle(folder)
- local f=workspace:FindFirstChild(folder)
- if f then
-  for _,m in ipairs(f:GetChildren()) do
-   if m:IsA("Model") then
-    local s=m:FindFirstChild("Stats")
-    local o=s and s:FindFirstChild("Owner")
-    local v=o and o.Value
-    if v==P or v==P.Name or v==P.UserId or m:GetAttribute("Owner")==P.Name or m:GetAttribute("Owner")==P.UserId then
-     teleport(m) return
-    end
+ for _,m in ipairs(vehicles()) do
+  local par=m
+  local inFolder=false
+  while par and par~=workspace do
+   if par.Name==folder then inFolder=true break end
+   par=par.Parent
+  end
+  if inFolder then
+   local s=m:FindFirstChild("Stats")
+   local o=s and s:FindFirstChild("Owner")
+   local v
+   if o then pcall(function() v=o.Value end) end
+   if v==P or v==P.Name or v==P.UserId or m:GetAttribute("Owner")==P.Name or m:GetAttribute("Owner")==P.UserId then
+    teleport(m) return
    end
   end
  end
@@ -300,6 +314,72 @@ local function refresh()
 end
 track(Search:GetPropertyChangedSignal("Text"):Connect(refresh))
 btn(Car,"ATUALIZAR",refresh)
+
+-- CÓDIGOS
+local CP=Pages["CÓDIGOS"]
+local Http=game:GetService("HttpService")
+local URL="https://raw.githubusercontent.com/1yurissbr-dev/Reposkyv2/main/codes.json"
+local Codes,Chosen,Busy={},nil,false
+local CS=label(CP,"Aguardando códigos...",30)
+local Entry=make("TextBox",{Size=UDim2.new(1,-6,0,34),BackgroundColor3=Color3.fromRGB(29,36,49),TextColor3=Color3.new(1,1,1),PlaceholderText="Código selecionado ou manual...",Text="",ClearTextOnFocus=false,Font=Enum.Font.Gotham,TextSize=12},CP)
+round(Entry)
+local function loadCodes()
+ local ok,data=pcall(function() return Http:JSONDecode(game:HttpGet(URL)) end)
+ if not ok or type(data)~="table" or type(data.codes)~="table" then CS.Text="Falha ao carregar códigos." return end
+ Codes={}
+ local seen={}
+ for _,v in ipairs(data.codes) do
+  local code=type(v)=="string" and v or type(v)=="table" and (v.code or v.Code)
+  if type(code)=="string" and code~="" and not seen[code] then
+   seen[code]=true Codes[#Codes+1]=code
+  end
+ end
+ CS.Text=#Codes.." código(s) carregado(s)."
+end
+local function fillCode(code)
+ local menu=PG:FindFirstChild("Menu")
+ local settings=menu and menu:FindFirstChild("Settings")
+ local panel=settings and settings:FindFirstChild("Code")
+ local input=panel and panel:FindFirstChild("TextBox")
+ if not input or not input:IsA("TextBox") then
+  CS.Text="Abra Menu > Settings > Code."
+  return false
+ end
+ input:CaptureFocus()
+ input.Text=code
+ input:ReleaseFocus()
+ CS.Text="Código preenchido. Toque em Submit."
+ return true
+end
+btn(CP,"CARREGAR CÓDIGOS",loadCodes)
+btn(CP,"PREENCHER CÓDIGO",function()
+ if Busy then return end
+ Busy=true
+ fillCode(Entry.Text)
+ Busy=false
+end)
+btn(CP,"PREENCHER TODOS",function()
+ if Busy then return end
+ if #Codes==0 then CS.Text="Nenhum código carregado." return end
+ Busy=true
+ local n=0
+ for _,code in ipairs(Codes) do
+  if Closed then break end
+  Entry.Text=code
+  if fillCode(code) then n+=1 end
+  task.wait(1)
+ end
+ CS.Text=n.."/"..#Codes.." códigos preenchidos. Envie no jogo."
+ Busy=false
+end)
+btn(CP,"PRÓXIMO CÓDIGO",function()
+ if #Codes==0 then CS.Text="Carregue os códigos primeiro." return end
+ local i=table.find(Codes,Chosen) or 0
+ i=i%#Codes+1
+ Chosen=Codes[i]
+ Entry.Text=Chosen
+ CS.Text="Selecionado "..i.."/"..#Codes
+end)
 
 local function drag(obj,handle)
  local moving,start,pos
